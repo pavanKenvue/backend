@@ -57,6 +57,7 @@ htmlcov/
 .mypy_cache/
 .pyre/
 .pytype/
+function.zip
 
 # ------------------------------------------------------------------
 # Logs

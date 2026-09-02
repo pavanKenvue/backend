@@ -27,6 +27,7 @@ import logger
 from column_registry import REGISTRY, UnknownColumn
 from models import FilterValuesRequest
 from column_registry import _read_local_or_s3
+from redis_client import build_cache_key, cache_get_json, check_redis_connection
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------------------
@@ -137,6 +138,7 @@ def create_app() -> FastAPI:
         return {
             "status": "ok",
             "registry": REGISTRY.diagnostics(),
+            "check_redis_connection" : await check_redis_connection()
         }
 
     @app.get("/config")
@@ -236,6 +238,32 @@ def create_app() -> FastAPI:
 
     @app.post("/filter_multiple_values")
     async def filter_multiple_values(req: FilterValuesRequest):
+        cache_payload = {
+            "column": req.current_column_name,
+            "filters": sorted(
+                [
+                    {
+                        "column_name": f.column_name,
+                        "values": sorted(f.values),
+                    }
+                    for f in req.previous_filters
+                ],
+                key=lambda item: item["column_name"],
+            ),
+            "q": (req.q or "").strip().lower(),
+            "limit": req.limit,
+            "offset": req.offset,
+        }
+        cache_key = build_cache_key("filter-values", cache_payload)
+        cached_result = await cache_get_json(cache_key)  
+        if cached_result is not None:
+            cached_result["cache"] = {
+                "hit": True,
+                "key": cache_key,
+            }
+            logger.info("filter_multiple_values cache hit ""column=%s filters=%d", 
+                        req.current_column_name,len(req.previous_filters))
+            return cached_result      
         result = await athena_filter.filter_values(
             column=req.current_column_name,
             filters=[(f.column_name, f.values) for f in req.previous_filters],
@@ -503,5 +531,6 @@ handler = Mangum(app, lifespan="auto")
 #     import uvicorn
 
 #     port = int(os.getenv("PORT", "8000"))
+    
 #     logger.info(f"Server running on http://localhost:{port}")
 #     uvicorn.run(app, host="127.0.0.1", port=port)

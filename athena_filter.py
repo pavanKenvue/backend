@@ -193,7 +193,7 @@ def build_query(
         f"WHERE {where_sql} "
         f"OFFSET {int(max(0, offset))} LIMIT {fetch_size}"
     )
-    print("sql", sql, params)
+    # print("sql", sql, params)
     return sql, params
 
 
