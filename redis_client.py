@@ -4,12 +4,12 @@ import hashlib
 import json
 import socket
 from typing import Any, Optional
-from redis.asyncio import Redis
+from redis.asyncio.cluster import RedisCluster
 from redis.exceptions import RedisError, ConnectionError as RedisConnectionError
 import logger
 import traceback
 
-redis_client: Optional[Redis] = None
+redis_client: Optional[RedisCluster] = None
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").lower() == "true"
 ELASTICACHE_ENDPOINT = os.getenv("ELASTICACHE_ENDPOINT", "clustercfg.quicksightelastic.3syauu.use1.cache.amazonaws.com")
 ELASTICACHE_AUTH_TOKEN = os.getenv("ELASTICACHE_AUTH_TOKEN")
@@ -17,25 +17,29 @@ REDIS_CONNECT_TIMEOUT_SECONDS = 5
 REDIS_SOCKET_TIMEOUT_SECONDS = 5
 REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "quicksight-api")
 
-def get_redis_client() -> Optional[Redis]:
+def get_redis_client() -> Optional[RedisCluster]:
     global redis_client
 
     if not REDIS_ENABLED or not ELASTICACHE_ENDPOINT:
-        print("Redis disabled or ElastiCache endpoint not configured")
+        print("Redis disabled or ElastiCacheured")
         return None
 
-    redis_client = Redis(
-            host=ELASTICACHE_ENDPOINT,
-            port=6379,
-            password=ELASTICACHE_AUTH_TOKEN or None,
-            ssl=True,
-            decode_responses=True,
-            socket_connect_timeout=REDIS_CONNECT_TIMEOUT_SECONDS,
-            socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
-            socket_keepalive=True,
-            retry_on_timeout=True,
-        )
-    print("ElastiCache client initialized. endpoint=%s port=%s", ELASTICACHE_ENDPOINT,6379)
+    redis_client = RedisCluster(
+        host=ELASTICACHE_ENDPOINT,
+        port=6379,
+        password=ELASTICACHE_AUTH_TOKEN or None,
+        ssl=True,
+        decode_responses=True,
+        socket_connect_timeout=REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS,
+        socket_keepalive=True,
+    )
+
+    print(
+        "ElastiCache client initialized. endpoint=%s port=%s",
+        ELASTICACHE_ENDPOINT,
+        6379,
+    )
 
     return redis_client
 
@@ -66,18 +70,15 @@ def build_cache_key(namespace: str, payload: Any) -> str:
     digest = hashlib.sha256(
         serialized.encode("utf-8")
     ).hexdigest()
-    # print(f"{REDIS_KEY_PREFIX}:{namespace}:{digest}")
     return f"{REDIS_KEY_PREFIX}:{namespace}:{digest}"
 
 
 async def cache_get_json(key: str) -> Optional[Any]:
     client = get_redis_client()
-    # print("cache_get_json", client)
     if client is None:     
         return None
     try:
         cached_value = await client.get(key)
-        print("cached_value", cached_value)
         if cached_value is None:
             return None
         return json.loads(cached_value)
@@ -95,3 +96,45 @@ async def cache_get_json(key: str) -> Optional[Any]:
             repr(exc),
         )
         return None
+
+async def cache_set_json(
+    key: str,
+    value: Any,
+    ttl_seconds: int = 3600,
+) -> bool:
+    client = get_redis_client()
+
+    if client is None:
+        return False
+
+    try:
+        await client.set(
+            key,
+            json.dumps(value),
+            ex=ttl_seconds,
+        )
+
+        print(f"Redis SET success key={key}")
+
+        return True
+
+    except (
+        RedisError,
+        RedisConnectionError,
+        TimeoutError,
+        socket.timeout,
+    ) as exc:
+        print(f"Redis SET failed. key={key} error={repr(exc)}")
+        return False
+
+
+async def close_redis() -> None:
+    global redis_client
+    if redis_client is not None:
+        try:
+            await redis_client.aclose()
+            # print("Redis client closed")
+        except Exception as exc:
+            print(f"Error closing Redis client: {exc}")
+        finally:
+            redis_client = None

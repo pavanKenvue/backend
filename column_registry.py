@@ -21,7 +21,7 @@ import logger
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
-COLUMN_MAP_PATH = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "test_data", "column_map.json"))
+COLUMN_MAP_PATH = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "resources", "column_map.json"))
 COLUMN_MAP_KEY = os.getenv("COLUMN_MAP_KEY", "column_map.json")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 

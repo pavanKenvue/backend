@@ -15,7 +15,7 @@ pip install -r requirements.txt \
   -t package/
 
 echo "Copying source files..."
-cp *.py -r test_data/ package/
+cp *.py -r resources/ package/
 
 echo "Creating ZIP package..."
 powershell.exe -Command "Compress-Archive -Path package\* -DestinationPath function.zip -Force"

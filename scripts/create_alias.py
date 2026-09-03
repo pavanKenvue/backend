@@ -90,9 +90,9 @@ def build_column_map():
         if not next_token:
             break
 
-    os.makedirs("test_data", exist_ok=True)
+    os.makedirs("resources", exist_ok=True)
 
-    output_file = "test_data/column_map_alias.json"
+    output_file = "resources/column_map_alias.json"
 
     with open(output_file, "w") as f:
         json.dump(column_map, f, indent=2)

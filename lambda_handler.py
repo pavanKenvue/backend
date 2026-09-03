@@ -9,10 +9,11 @@ below it referenced an undefined name and had an empty body.
 """
 import json
 import os
+import time
 import re
 import uuid
 from typing import Any, Optional
-
+from contextlib import asynccontextmanager
 import boto3
 from datetime import datetime, UTC
 from botocore.exceptions import ClientError
@@ -27,7 +28,7 @@ import logger
 from column_registry import REGISTRY, UnknownColumn
 from models import FilterValuesRequest
 from column_registry import _read_local_or_s3
-from redis_client import build_cache_key, cache_get_json, check_redis_connection
+from redis_client import build_cache_key, cache_get_json, check_redis_connection, cache_set_json, get_redis_client, close_redis
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # ---------------------------------------------------------------------------
@@ -37,7 +38,7 @@ DEFAULT_SEARCH_LIMIT = int(os.getenv("DEFAULT_SEARCH_LIMIT", "500"))
 MAX_SEARCH_LIMIT = int(os.getenv("MAX_SEARCH_LIMIT", "2000"))
 MIN_SEARCH_LENGTH = int(os.getenv("MIN_SEARCH_LENGTH", "2"))
 SMART_SEARCH_FILE = os.getenv("COLUMN_MAP_KEY", "smart_search_data.json")
-LOCAL_SMART_SEARCH_FILE = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "test_data", "smart_search_data.json"))
+LOCAL_SMART_SEARCH_FILE = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "resources", "smart_search_data.json"))
 AWS_ACCOUNT_ID = os.getenv("AWS_ACCOUNT_ID")
 QUICKSIGHT_REGION = os.getenv("QUICKSIGHT_REGION", "us-east-1")
 DASHBOARD_ID = os.getenv("DASHBOARD_ID")
@@ -50,6 +51,9 @@ DEFAULT_BOOKMARK_NAME = os.environ.get("DEFAULT_BOOKMARK_NAME", "Untitled bookma
 TEXT_INPUT_COLUMNS = [
     c.strip() for c in os.getenv("TEXT_INPUT_COLUMNS", "").split(",") if c.strip()
 ]
+CACHE_TTL_SECONDS = int(
+    os.getenv("CACHE_TTL_SECONDS", "3600")
+)
 HIGH_CARDINALITY_THRESHOLD = int(os.getenv("HIGH_CARDINALITY_THRESHOLD", "100"))
 BOOKMARK_ID_LENGTH = int(os.environ.get("BOOKMARK_ID_LENGTH", "12"))
 ALL_QS_FEATURES = {
@@ -71,8 +75,14 @@ s3_client = boto3.client("s3", region_name=os.getenv("AWS_REGION", QUICKSIGHT_RE
 qs_client = boto3.client("quicksight", region_name=QUICKSIGHT_REGION)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    await close_redis()
+    # print("Redis connection closed")
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Filter Builder")
+    app = FastAPI(lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"] if ALLOWED_DOMAIN == "*" else [ALLOWED_DOMAIN],
@@ -254,9 +264,16 @@ def create_app() -> FastAPI:
             "limit": req.limit,
             "offset": req.offset,
         }
+        # print("cache_payload", cache_payload);
+
         cache_key = build_cache_key("filter-values", cache_payload)
-        cached_result = await cache_get_json(cache_key)  
+        # print("cache_key", cache_key)
+        start = time.perf_counter()
+        cached_result = await cache_get_json(cache_key) 
+        cache_ms = round((time.perf_counter() - start) * 1000, 2) 
         if cached_result is not None:
+            cached_result["source"] = "cache"
+            cached_result["elapsedMs"] = cache_ms
             cached_result["cache"] = {
                 "hit": True,
                 "key": cache_key,
@@ -271,12 +288,22 @@ def create_app() -> FastAPI:
             limit=req.limit,
             offset=req.offset,
         )
+            # CACHE SET
+        await cache_set_json(
+                cache_key,
+                result,
+                ttl_seconds= CACHE_TTL_SECONDS,
+            )
+        result["cache"] = {
+                "hit": False,
+                "key": cache_key,
+            }
         logger.info(
             f'filter_multiple_values column={result["column"]} '
             f'filters={len(req.previous_filters)} source={result["source"]} '
             f'{result["elapsedMs"]}ms: {len(result["values"])} values'
         )
-        return result
+        return result   
 
     @app.post("/bookmark")
     async def post_bookmark(request: Request):
@@ -284,7 +311,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail="S3_BUCKET_NAME is not configured")
         try:
             body = await request.json()
-            print("encrypted", body.get("encrypted"));
+            # print("encrypted", body.get("encrypted"));
         except Exception:
             body = None
 
@@ -390,7 +417,7 @@ def create_app() -> FastAPI:
         if not re.fullmatch(r"[A-Za-z0-9]+", id):
             raise HTTPException(status_code=400, detail="Invalid id")
         key = f"{BOOKMARKS_PREFIX}{id}.json"
-        print("key", key)
+        # print("key", key)
         try:
             s3_client.delete_object(
                 Bucket=S3_BUCKET_NAME,
