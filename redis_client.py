@@ -11,10 +11,10 @@ import traceback
 
 redis_client: Optional[RedisCluster] = None
 REDIS_ENABLED = os.getenv("REDIS_ENABLED", "true").lower() == "true"
-ELASTICACHE_ENDPOINT = os.getenv("ELASTICACHE_ENDPOINT", "clustercfg.quicksightelastic.3syauu.use1.cache.amazonaws.com")
+ELASTICACHE_ENDPOINT = os.getenv("ELASTICACHE_ENDPOINT", "")
 ELASTICACHE_AUTH_TOKEN = os.getenv("ELASTICACHE_AUTH_TOKEN")
-REDIS_CONNECT_TIMEOUT_SECONDS = 5
-REDIS_SOCKET_TIMEOUT_SECONDS = 5
+REDIS_CONNECT_TIMEOUT_SECONDS = os.getenv("REDIS_CONNECT_TIMEOUT_SECONDS", 5)
+REDIS_SOCKET_TIMEOUT_SECONDS = os.getenv("REDIS_SOCKET_TIMEOUT_SECONDS", 5)
 REDIS_KEY_PREFIX = os.getenv("REDIS_KEY_PREFIX", "quicksight-api")
 
 def get_redis_client() -> Optional[RedisCluster]:

@@ -36,19 +36,19 @@ import logger
 from column_registry import REGISTRY, _read_local_or_s3
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-ATHENA_DATABASE = os.getenv("ATHENA_DATABASE", "kms_sdh_analytics")
-ATHENA_TABLE = os.getenv("ATHENA_TABLE", os.getenv("SV_TABLE_NAME", "sv_golden_layer"))
-ATHENA_OUTPUT_LOCATION = os.getenv("ATHENA_OUTPUT_LOCATION", "s3://kms-rds-analytics/athena-results/")
+ATHENA_DATABASE = os.getenv("ATHENA_DATABASE", "")
+ATHENA_TABLE = os.getenv("ATHENA_TABLE", os.getenv("SV_TABLE_NAME", ""))
+ATHENA_OUTPUT_LOCATION = os.getenv("ATHENA_OUTPUT_LOCATION", "")
 ATHENA_REGION = os.getenv("ATHENA_REGION", os.getenv("AWS_REGION"))
-ATHENA_POLL_INTERVAL_SECONDS = float(os.getenv("ATHENA_POLL_INTERVAL_SECONDS", "2"))
-ATHENA_QUERY_TIMEOUT_SECONDS = int(os.getenv("ATHENA_QUERY_TIMEOUT_SECONDS", "40"))
-COLUMN_ALIAS_PATH = os.getenv("COLUMN_ALIAS_PATH", os.path.join(_THIS_DIR, "resources", "column_map_alias.json"))
-COLUMN_ALIAS_KEY = os.getenv("COLUMN_ALIAS_KEY", "column_map_alias.json")
+ATHENA_POLL_INTERVAL_SECONDS = float(os.getenv("ATHENA_POLL_INTERVAL_SECONDS", ""))
+ATHENA_QUERY_TIMEOUT_SECONDS = int(os.getenv("ATHENA_QUERY_TIMEOUT_SECONDS", ""))
+COLUMN_ALIAS_LOCAL_PATH = os.getenv("COLUMN_ALIAS_LOCAL_PATH", os.path.join(_THIS_DIR, "resources", "column_map_alias.json"))
+COLUMN_ALIAS_KEY = os.getenv("COLUMN_ALIAS_KEY", "")
 BASE_ALIAS = "g"
 JOIN_TABLES = {
-    "l": os.getenv("ATHENA_LAB_DETAILS_TABLE", "sv_lab_details"),
-    "p": os.getenv("ATHENA_PRODUCT_MAPPING_TABLE", "sv_product_mapping"),
-    "m": os.getenv("ATHENA_MED_NON_MED_TABLE", "sv_med_non_med"),
+    "l": os.getenv("ATHENA_LAB_DETAILS_TABLE", ""),
+    "p": os.getenv("ATHENA_PRODUCT_MAPPING_TABLE", ""),
+    "m": os.getenv("ATHENA_MED_NON_MED_TABLE", ""),
 }
 JOIN_SPECS: Dict[str, Tuple[str, str]] = {
     "l": (BASE_ALIAS, "g.case_id = l.case_id"),
@@ -87,7 +87,7 @@ def _load_alias_map() -> Dict[str, str]:
     entirely is fine -- every column then falls back to the base table,
     which is the pre-join behaviour.
     """
-    raw = _read_local_or_s3(COLUMN_ALIAS_PATH, COLUMN_ALIAS_KEY, required=False) or {}
+    raw = _read_local_or_s3(COLUMN_ALIAS_LOCAL_PATH, COLUMN_ALIAS_KEY, required=False) or {}
     if not isinstance(raw, dict):
         logger.warn("column_map_alias JSON is not an object; ignoring it")
         return {}
@@ -193,7 +193,7 @@ def build_query(
         f"WHERE {where_sql} "
         f"OFFSET {int(max(0, offset))} LIMIT {fetch_size}"
     )
-    # print("sql", sql, params)
+    print("sql", sql, params)
     return sql, params
 
 

@@ -22,22 +22,17 @@ import logger
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 COLUMN_MAP_PATH = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "resources", "column_map.json"))
-COLUMN_MAP_KEY = os.getenv("COLUMN_MAP_KEY", "column_map.json")
+COLUMN_MAP_KEY = os.getenv("COLUMN_MAP_KEY", "")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+ENABLE_LOCAL_FILE_READ = os.getenv("ENABLE_LOCAL_FILE_READ")
 
 # Orientation of column_map.json. "auto" inspects the data; set explicitly to
 # "column_to_param" or "param_to_column" to pin it.
 COLUMN_MAP_ORIENTATION = os.getenv("COLUMN_MAP_ORIENTATION", "auto").lower()
-
-# Conservative SQL identifier shape: letter first, then letters/digits/_/$/#,
-# max 128 chars. Anything that fails this never reaches a query, even if
-# column_map.json itself were tampered with in S3.
 _IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,127}$")
-
 
 class UnknownColumn(ValueError):
     """The requested identifier is not in the allowlist."""
-
 
 @dataclass(frozen=True)
 class ColumnInfo:
@@ -50,16 +45,14 @@ class ColumnInfo:
         return self.params[0]
 
 
-def _read_local_or_s3(local_path: str, s3_key: str, required: bool) -> Optional[dict]:
-    print(local_path)
-    if os.path.exists(local_path):
+def _read_local_or_s3(local_path: str, s3_key: str, required: bool) -> Optional[dict]:   
+    if os.path.exists(local_path) and ENABLE_LOCAL_FILE_READ:
         source = f"local file {local_path}"
         try:
             with open(local_path, "r", encoding="utf-8") as handle:
                 return json.load(handle)
         except Exception as exc:
             raise RuntimeError(f"{source} is not valid JSON: {exc}") from exc
-
     if S3_BUCKET_NAME:
         source = f"s3://{S3_BUCKET_NAME}/{s3_key}"
         try:
@@ -70,8 +63,7 @@ def _read_local_or_s3(local_path: str, s3_key: str, required: bool) -> Optional[
             if required:
                 raise RuntimeError(f"Failed to load {source}: {exc}") from exc
             logger.warn(f"Optional file {source} not loaded: {exc}")
-            return None
-
+            return None 
     if required:
         raise RuntimeError(
             f"No source for {local_path}: file absent and S3_BUCKET_NAME unset"
@@ -84,13 +76,6 @@ def _looks_like_sql_identifier(value: str) -> bool:
 
 
 def _orient(raw: Dict[str, str]) -> Dict[str, str]:
-    """Return {COLUMN_NAME: param} regardless of how the file is written.
-
-    column_map.json ships as {COLUMN_NAME: pWidgetParam}, but the previous
-    loader read it as {param: COLUMN_NAME} and so treated `pWidgetAGENTNOTES`
-    as a database column. Rather than trusting either convention, decide from
-    the data: SQL identifiers are UPPER_SNAKE, widget params are mixed case.
-    """
     if COLUMN_MAP_ORIENTATION == "column_to_param":
         return dict(raw)
     if COLUMN_MAP_ORIENTATION == "param_to_column":
@@ -121,8 +106,6 @@ class ColumnRegistry:
         params_by_column: Dict[str, List[str]] = {}
         for column, param in column_to_param.items():
             if not _IDENT_RE.match(column):
-                # Names containing spaces or punctuation cannot be unquoted
-                # SQL identifiers. Almost always a typo in the map.
                 self.rejected.append(column)
                 continue
             params_by_column.setdefault(column.upper(), []).append(param)
@@ -153,12 +136,7 @@ class ColumnRegistry:
             f"({len(self.rejected)} rejected, {len(self.collisions)} param collisions)"
         )
 
-    # -- lookup ---------------------------------------------------------
     def resolve(self, name: Optional[str]) -> str:
-        """Map a caller-supplied name to a canonical, allowlisted column name.
-
-        This is the only path by which an identifier may reach SQL.
-        """
         if not name or not isinstance(name, str):
             raise UnknownColumn("column name is required")
         info = self._by_name.get(name.strip().upper())
@@ -170,17 +148,11 @@ class ColumnRegistry:
         return self._by_name[self.resolve(name)]
 
     def quoted(self, name: str) -> str:
-        """Return a safely quoted identifier for interpolation into SQL.
-
-        `name` must already have come from resolve(); the regex check is
-        defence in depth, not the primary control.
-        """
         canonical = self.resolve(name)
         if not _IDENT_RE.match(canonical):
             raise UnknownColumn(f"Refusing to interpolate identifier: {canonical!r}")
         return f'"{canonical}"'
 
-    # -- listings -------------------------------------------------------
     @property
     def columns(self) -> List[str]:
         return sorted(self._by_name)
@@ -217,7 +189,4 @@ def load_registry() -> ColumnRegistry:
 
     return ColumnRegistry(_orient(raw))
 
-
-# Built once per Lambda container, at import time, so a malformed map fails the
-# cold start loudly instead of on the first request.
 REGISTRY = load_registry()

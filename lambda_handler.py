@@ -28,34 +28,25 @@ import logger
 from column_registry import REGISTRY, UnknownColumn
 from models import FilterValuesRequest
 from column_registry import _read_local_or_s3
-from redis_client import build_cache_key, cache_get_json, check_redis_connection, cache_set_json, get_redis_client, close_redis
+from redis_client import build_cache_key, cache_get_json, check_redis_connection, cache_set_json, close_redis
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# ---------------------------------------------------------------------------
-# Config / env
-# ---------------------------------------------------------------------------
-DEFAULT_SEARCH_LIMIT = int(os.getenv("DEFAULT_SEARCH_LIMIT", "500"))
-MAX_SEARCH_LIMIT = int(os.getenv("MAX_SEARCH_LIMIT", "2000"))
+
 MIN_SEARCH_LENGTH = int(os.getenv("MIN_SEARCH_LENGTH", "2"))
-SMART_SEARCH_FILE = os.getenv("COLUMN_MAP_KEY", "smart_search_data.json")
+SMART_SEARCH_FILE = os.getenv("SMART_SEARCH_FILE", "")
 LOCAL_SMART_SEARCH_FILE = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "resources", "smart_search_data.json"))
 AWS_ACCOUNT_ID = os.getenv("AWS_ACCOUNT_ID")
-QUICKSIGHT_REGION = os.getenv("QUICKSIGHT_REGION", "us-east-1")
+QUICKSIGHT_REGION = os.getenv("QUICKSIGHT_REGION", "")
 DASHBOARD_ID = os.getenv("DASHBOARD_ID")
 QUICKSIGHT_USER_ARN = os.getenv("QUICKSIGHT_USER_ARN")
-ALLOWED_DOMAIN = os.getenv("ALLOWED_DOMAIN", "http://localhost:8000")
-S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "argus-cpd-dashboard-web-859217211726")
+ALLOWED_DOMAIN = os.getenv("ALLOWED_DOMAIN", "")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "")
 BOOKMARKS_PREFIX = os.getenv("BOOKMARKS_PREFIX", "bookmarks/")
-QS_SESSION_LIFETIME_MINUTES = int(os.getenv("QS_SESSION_LIFETIME_MINUTES", "600"))
+QS_SESSION_LIFETIME_MINUTES = int(os.getenv("QS_SESSION_LIFETIME_MINUTES", ""))
 DEFAULT_BOOKMARK_NAME = os.environ.get("DEFAULT_BOOKMARK_NAME", "Untitled bookmark")
-TEXT_INPUT_COLUMNS = [
-    c.strip() for c in os.getenv("TEXT_INPUT_COLUMNS", "").split(",") if c.strip()
-]
-CACHE_TTL_SECONDS = int(
-    os.getenv("CACHE_TTL_SECONDS", "3600")
-)
-HIGH_CARDINALITY_THRESHOLD = int(os.getenv("HIGH_CARDINALITY_THRESHOLD", "100"))
-BOOKMARK_ID_LENGTH = int(os.environ.get("BOOKMARK_ID_LENGTH", "12"))
+TEXT_INPUT_COLUMNS = [c.strip() for c in os.getenv("TEXT_INPUT_COLUMNS", "").split(",") if c.strip()]
+CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
+HIGH_CARDINALITY_THRESHOLD = int(os.getenv("HIGH_CARDINALITY_THRESHOLD", ""))
 ALL_QS_FEATURES = {
     "statePersistence": "StatePersistence",
     "bookmarks": "Bookmarks",
@@ -79,7 +70,6 @@ qs_client = boto3.client("quicksight", region_name=QUICKSIGHT_REGION)
 async def lifespan(app: FastAPI):
     yield
     await close_redis()
-    # print("Redis connection closed")
 
 def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
@@ -90,12 +80,8 @@ def create_app() -> FastAPI:
         allow_headers=["Content-Type", "authorization"],
     )
 
-    # ------------------------------------------------------------------
-    # Error handling
-    # ------------------------------------------------------------------
     @app.exception_handler(UnknownColumn)
     async def unknown_column_handler(request: Request, exc: UnknownColumn):
-        # Deliberately does not echo the offending value back to the caller.
         logger.warn("Rejected unknown column", repr(exc))
         return JSONResponse(
             status_code=400,
@@ -133,16 +119,12 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(Exception)
     async def general_exception_handler(request: Request, exc: Exception):
-        # Log the detail, return an opaque message: DB errors leak schema.
         logger.error("Unhandled error", repr(exc))
         return JSONResponse(
             status_code=500,
             content={"error": "Internal server error", "type": "InternalError"},
         )
 
-    # ------------------------------------------------------------------
-    # Metadata
-    # ------------------------------------------------------------------
     @app.get("/health")
     async def health():
         return {
@@ -162,9 +144,6 @@ def create_app() -> FastAPI:
 
     @app.get("/columns")
     async def handle_columns():
-        # Returns real database column names. The previous implementation
-        # iterated column_map as {param: column} while the file is written as
-        # {column: param}, so this endpoint returned `pWidget*` names.
         return {
             "columns": REGISTRY.columns,
             "paramMap": REGISTRY.param_map(),
@@ -183,19 +162,9 @@ def create_app() -> FastAPI:
         page_size: int = Query(20, ge=1, le=100)
     ):
         query = str(request.query_params.get("query", "")).strip().lower()
-
         if len(query) < 3:
-            raise HTTPException(
-                status_code=400,
-                detail="Query must contain at least 3 characters."
-            )
-
-        data = _read_local_or_s3(
-            LOCAL_SMART_SEARCH_FILE,
-            SMART_SEARCH_FILE,
-            True
-        )
-
+            raise HTTPException(status_code=400, detail="Query must contain at least 3 characters.")
+        data = _read_local_or_s3(LOCAL_SMART_SEARCH_FILE, SMART_SEARCH_FILE, True)
         results = []
 
         for item in data:
@@ -217,18 +186,10 @@ def create_app() -> FastAPI:
                 })
 
         total_count = len(results)
-
         start = (page - 1) * page_size
         end = start + page_size
-
         paginated_results = results[start:end]
-
-        logger.info(
-            'search "%s": %d columns matched',
-            query,
-            total_count
-        )
-
+        logger.info('search "%s": %d columns matched', query, total_count)
         return {
             "query": query,
             "results": paginated_results,
@@ -264,10 +225,7 @@ def create_app() -> FastAPI:
             "limit": req.limit,
             "offset": req.offset,
         }
-        # print("cache_payload", cache_payload);
-
         cache_key = build_cache_key("filter-values", cache_payload)
-        # print("cache_key", cache_key)
         start = time.perf_counter()
         cached_result = await cache_get_json(cache_key) 
         cache_ms = round((time.perf_counter() - start) * 1000, 2) 
@@ -289,11 +247,7 @@ def create_app() -> FastAPI:
             offset=req.offset,
         )
             # CACHE SET
-        await cache_set_json(
-                cache_key,
-                result,
-                ttl_seconds= CACHE_TTL_SECONDS,
-            )
+        await cache_set_json(cache_key, result, ttl_seconds= CACHE_TTL_SECONDS)
         result["cache"] = {
                 "hit": False,
                 "key": cache_key,
@@ -311,7 +265,6 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail="S3_BUCKET_NAME is not configured")
         try:
             body = await request.json()
-            # print("encrypted", body.get("encrypted"));
         except Exception:
             body = None
 
@@ -417,7 +370,6 @@ def create_app() -> FastAPI:
         if not re.fullmatch(r"[A-Za-z0-9]+", id):
             raise HTTPException(status_code=400, detail="Invalid id")
         key = f"{BOOKMARKS_PREFIX}{id}.json"
-        # print("key", key)
         try:
             s3_client.delete_object(
                 Bucket=S3_BUCKET_NAME,
