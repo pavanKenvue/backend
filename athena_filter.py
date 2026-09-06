@@ -1,29 +1,4 @@
-"""
-Athena-backed query path for /filter_multiple_values.
 
-Connection shape (client construction, QueryExecutionContext, polling,
-ResultConfiguration) mirrors the working example in test.py. Column
-identifiers resolve through column_registry.REGISTRY -- no caller-supplied
-string reaches SQL as an identifier. Values never reach SQL as text either:
-they travel as Athena native query parameters (`?` placeholders +
-ExecutionParameters on start_query_execution).
-
-The base table (`g`) is joined to up to three related tables -- lab details
-(`l`), product mapping (`p`), and med/non-med alerts (`m`) -- but only the
-ones a given request actually needs. `column_map_alias.json` says which
-table(s) each column lives on (`{"lab_test_unit": [{"table": "sv_lab_details",
-"alias": "l", "column": "lab_test_unit"}], ...}`); a column can list more
-than one candidate table (e.g. "case_id" is on both the base table and lab
-details), in which case the base table wins when present, otherwise the
-first candidate is used. Anything absent from that file is assumed to live
-on the base table. Joins are added lazily per request: a query that only
-touches base-table columns never pays the join cost, and one that needs `p`
-automatically pulls in `l` too, since `p` only joins through `l`.
-
-This module serves /filter_multiple_values. Everything else in the app
-(health check, /columns, /search, bookmarks) does not touch a database at
-all -- it is served from column_map.json and S3.
-"""
 import os
 import re
 import time
@@ -36,14 +11,15 @@ import logger
 from column_registry import REGISTRY, _read_local_or_s3
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-ATHENA_DATABASE = os.getenv("ATHENA_DATABASE", "")
-ATHENA_TABLE = os.getenv("ATHENA_TABLE", os.getenv("SV_TABLE_NAME", ""))
+ATHENA_DATABASE = os.getenv("ATHENA_DATABASE")
+SV_PRIMARY_TABLE = os.getenv("SV_PRIMARY_TABLE")
 ATHENA_OUTPUT_LOCATION = os.getenv("ATHENA_OUTPUT_LOCATION", "")
 ATHENA_REGION = os.getenv("ATHENA_REGION", os.getenv("AWS_REGION"))
-ATHENA_POLL_INTERVAL_SECONDS = float(os.getenv("ATHENA_POLL_INTERVAL_SECONDS", ""))
-ATHENA_QUERY_TIMEOUT_SECONDS = int(os.getenv("ATHENA_QUERY_TIMEOUT_SECONDS", ""))
+ATHENA_POLL_INTERVAL_SECONDS = float(os.getenv("ATHENA_POLL_INTERVAL_SECONDS", 2))
+ATHENA_QUERY_TIMEOUT_SECONDS = int(os.getenv("ATHENA_QUERY_TIMEOUT_SECONDS", 40))
 COLUMN_ALIAS_LOCAL_PATH = os.getenv("COLUMN_ALIAS_LOCAL_PATH", os.path.join(_THIS_DIR, "resources", "column_map_alias.json"))
-COLUMN_ALIAS_KEY = os.getenv("COLUMN_ALIAS_KEY", "")
+COLUMN_ALIAS_KEY = os.getenv("COLUMN_ALIAS_KEY")
+SV_SMART_SEARCH_TABLE = os.getenv("SV_SMART_SEARCH_TABLE", "sv_smart_seach_index")
 BASE_ALIAS = "g"
 JOIN_TABLES = {
     "l": os.getenv("ATHENA_LAB_DETAILS_TABLE", ""),
@@ -55,10 +31,10 @@ JOIN_SPECS: Dict[str, Tuple[str, str]] = {
     "p": ("l", "g.prod_cd = p.prod_cd"),
     "m": (BASE_ALIAS, "g.pt_name = m.event_name_med"),
 }
-for _part in (ATHENA_DATABASE, ATHENA_TABLE, *JOIN_TABLES.values()):
+for _part in (ATHENA_DATABASE, SV_PRIMARY_TABLE, *JOIN_TABLES.values()):
     if '"' in _part:
         raise RuntimeError(f"Invalid Athena identifier in configuration: {_part!r}")
-_FULL_TABLE = f'"{ATHENA_DATABASE}"."{ATHENA_TABLE}"'
+_FULL_TABLE = f'"{ATHENA_DATABASE}"."{SV_PRIMARY_TABLE}"'
 
 athena_client = boto3.client("athena", region_name=ATHENA_REGION) if ATHENA_REGION else boto3.client("athena")
 
@@ -76,17 +52,6 @@ _ALIAS_REF_RE = re.compile(
 
 
 def _load_alias_map() -> Dict[str, str]:
-    """Load {COLUMN_NAME: "alias.column"} from column_map_alias.json.
-
-    Each column there maps to a list of {"table", "alias", "column"}
-    candidates, since a column can live on more than one joined table (e.g.
-    "case_id" is on both the base table and lab details). The base table's
-    own candidate wins when present; otherwise the first candidate in the
-    list is used. Keyed on the registry's canonical (uppercase) column name
-    so lookups from build_query need no case juggling. Missing the file
-    entirely is fine -- every column then falls back to the base table,
-    which is the pre-join behaviour.
-    """
     raw = _read_local_or_s3(COLUMN_ALIAS_LOCAL_PATH, COLUMN_ALIAS_KEY, required=False) or {}
     if not isinstance(raw, dict):
         logger.warn("column_map_alias JSON is not an object; ignoring it")
@@ -138,12 +103,6 @@ def _qualified_column(column: str) -> str:
 
 
 def _required_joins(aliases: set) -> List[Tuple[str, str, str]]:
-    """Close `aliases` over their join dependencies and return them in a
-    dependency-safe order, as (alias, table, on-condition) triples.
-
-    A column on `p` needs `l` joined too, even if no `l` column was
-    requested directly, because `p` has no join key back to the base table.
-    """
     needed = set(aliases) - {BASE_ALIAS}
     changed = True
     while changed:
@@ -196,14 +155,39 @@ def build_query(
     print("sql", sql, params)
     return sql, params
 
+def _start_and_wait(sql: str, params: List[str]) -> str:
+    """Start a query and block (in the calling thread) until it reaches a
+    terminal state. Returns the query execution id for fetching results.
+    """
+    kwargs: Dict[str, Any] = dict(
+        QueryString=sql,
+        QueryExecutionContext={"Database": ATHENA_DATABASE},
+        ResultConfiguration={"OutputLocation": ATHENA_OUTPUT_LOCATION},
+    )
+    if params:
+        kwargs["ExecutionParameters"] = params
+
+    response = athena_client.start_query_execution(**kwargs)
+    query_execution_id = response["QueryExecutionId"]
+
+    deadline = time.monotonic() + ATHENA_QUERY_TIMEOUT_SECONDS
+    while True:
+        execution = athena_client.get_query_execution(QueryExecutionId=query_execution_id)
+        state = execution["QueryExecution"]["Status"]["State"]
+        if state == "SUCCEEDED":
+            return query_execution_id
+        if state in ("FAILED", "CANCELLED"):
+            reason = execution["QueryExecution"]["Status"].get("StateChangeReason", "Unknown error")
+            raise AthenaQueryFailed(f"Athena query {state}: {reason}")
+        if time.monotonic() > deadline:
+            athena_client.stop_query_execution(QueryExecutionId=query_execution_id)
+            raise AthenaQueryTimeout(
+                f"Athena query {query_execution_id} timed out after {ATHENA_QUERY_TIMEOUT_SECONDS}s"
+            )
+        time.sleep(ATHENA_POLL_INTERVAL_SECONDS)
+
 
 def _execute_sync(sql: str, params: List[str]) -> List[Optional[str]]:
-    """Run one query to completion and return its single-column rows.
-
-    Same start / poll / fetch shape as test.py's run_athena_query, done
-    synchronously end-to-end so it can run as one unit inside a threadpool
-    rather than blocking the event loop on each step.
-    """
     kwargs: Dict[str, Any] = dict(
         QueryString=sql,
         QueryExecutionContext={"Database": ATHENA_DATABASE},
@@ -244,6 +228,26 @@ def _execute_sync(sql: str, params: List[str]) -> List[Optional[str]]:
             rows.append(data[0].get("VarCharValue") if data else None)
     return rows
 
+def _execute_search_index_sync(sql: str, params: List[str]) -> List[Dict[str, Optional[str]]]:
+    """Same shape as `_execute_sync`, but for a two-column result set
+    (matched value, source column) rather than a single column.
+    """
+    query_execution_id = _start_and_wait(sql, params)
+
+    rows: List[Dict[str, Optional[str]]] = []
+    paginator = athena_client.get_paginator("get_query_results")
+    first_page = True
+    for page in paginator.paginate(QueryExecutionId=query_execution_id):
+        result_rows = page["ResultSet"]["Rows"]
+        if first_page:
+            result_rows = result_rows[1:]  # header row echoes the column names
+            first_page = False
+        for row in result_rows:
+            data = row.get("Data", [])
+            value = data[0].get("VarCharValue") if len(data) > 0 and data[0] else None
+            source_column = data[1].get("VarCharValue") if len(data) > 1 and data[1] else None
+            rows.append({"value": value, "source_column": source_column})
+    return rows
 
 async def filter_values(
     column: str,
@@ -284,3 +288,38 @@ async def filter_values(
             f"Slow Athena filter query: {elapsed_ms}ms column={column} filters={len(filters)}"
         )
     return result
+
+async def search_smart_index(query: str):
+    sql = f"""
+        WITH filtered AS (
+            SELECT
+                column_name,
+                column_value
+            FROM "{ATHENA_DATABASE}"."{SV_SMART_SEARCH_TABLE}"
+            WHERE LOWER(COALESCE(column_value, '')) LIKE ?
+            LIMIT 1000
+        )
+        SELECT
+            column_name,
+            json_format(CAST(array_agg(column_value) AS JSON)) AS matches,
+            count(*) AS count
+        FROM filtered
+        GROUP BY column_name
+        ORDER BY count DESC
+        LIMIT 10
+    """
+
+    params = [f"%{query.lower()}%"]
+    logger.info("smart search Athena SQL", sql)
+    started = time.monotonic()
+    rows = await run_in_threadpool(
+        _execute_search_index_sync,
+        sql,
+        params,
+    )
+    elapsed_ms = round((time.monotonic() - started) * 1000, 1)
+    if elapsed_ms > 1000:
+        logger.warn(f"Slow smart-search Athena query: {elapsed_ms}ms query={query!r}")
+
+    logger.info("smart search returned %d columns for query=%s",len(rows), query)
+    return rows

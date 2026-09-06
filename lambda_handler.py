@@ -36,17 +36,17 @@ MIN_SEARCH_LENGTH = int(os.getenv("MIN_SEARCH_LENGTH", "2"))
 SMART_SEARCH_FILE = os.getenv("SMART_SEARCH_FILE", "")
 LOCAL_SMART_SEARCH_FILE = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "resources", "smart_search_data.json"))
 AWS_ACCOUNT_ID = os.getenv("AWS_ACCOUNT_ID")
-QUICKSIGHT_REGION = os.getenv("QUICKSIGHT_REGION", "")
+QUICKSIGHT_REGION = os.getenv("QUICKSIGHT_REGION", "us-east-1")
 DASHBOARD_ID = os.getenv("DASHBOARD_ID")
 QUICKSIGHT_USER_ARN = os.getenv("QUICKSIGHT_USER_ARN")
 ALLOWED_DOMAIN = os.getenv("ALLOWED_DOMAIN", "")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "")
 BOOKMARKS_PREFIX = os.getenv("BOOKMARKS_PREFIX", "bookmarks/")
-QS_SESSION_LIFETIME_MINUTES = int(os.getenv("QS_SESSION_LIFETIME_MINUTES", ""))
+QS_SESSION_LIFETIME_MINUTES = int(os.getenv("QS_SESSION_LIFETIME_MINUTES", 600))
 DEFAULT_BOOKMARK_NAME = os.environ.get("DEFAULT_BOOKMARK_NAME", "Untitled bookmark")
 TEXT_INPUT_COLUMNS = [c.strip() for c in os.getenv("TEXT_INPUT_COLUMNS", "").split(",") if c.strip()]
 CACHE_TTL_SECONDS = int(os.getenv("CACHE_TTL_SECONDS", "3600"))
-HIGH_CARDINALITY_THRESHOLD = int(os.getenv("HIGH_CARDINALITY_THRESHOLD", ""))
+HIGH_CARDINALITY_THRESHOLD = int(os.getenv("HIGH_CARDINALITY_THRESHOLD", 100))
 ALL_QS_FEATURES = {
     "statePersistence": "StatePersistence",
     "bookmarks": "Bookmarks",
@@ -163,33 +163,36 @@ def create_app() -> FastAPI:
     ):
         query = str(request.query_params.get("query", "")).strip().lower()
         if len(query) < 3:
-            raise HTTPException(status_code=400, detail="Query must contain at least 3 characters.")
-        data = _read_local_or_s3(LOCAL_SMART_SEARCH_FILE, SMART_SEARCH_FILE, True)
+            raise HTTPException(
+                status_code=400,
+                detail="Query must contain at least 3 characters."
+            )
+        rows = await athena_filter.search_smart_index(query)
         results = []
-
-        for item in data:
-            column_name = item.get("COLUMN_NAME")
-            column_values = item.get("COLUMN_VALUES", [])
-
-            matched_values = [
-                str(v)
-                for v in column_values
-                if query in str(v).lower()
-            ]
-
-            if matched_values:
-                results.append({
+        for row in rows:
+            column_name = row.get("value")
+            if isinstance(row.get("source_column"), str):
+                row["source_column"] = json.loads(row["source_column"])
+            matches = row["source_column"]
+            results.append(
+                {
                     "column": column_name,
-                    "paramName": REGISTRY.param_map()[column_name],
-                    "matches": matched_values[:10],
-                    "count": len(matched_values)
-                })
+                    # "paramName": param_name,
+                    "matches": matches[:10] or [],
+                    "count": row.get("count", len(matches))
+                }
+            )
 
         total_count = len(results)
         start = (page - 1) * page_size
         end = start + page_size
         paginated_results = results[start:end]
-        logger.info('search "%s": %d columns matched', query, total_count)
+        logger.info(
+            'search "%s": %d columns matched',
+            query,
+            total_count
+        )
+
         return {
             "query": query,
             "results": paginated_results,
@@ -197,12 +200,15 @@ def create_app() -> FastAPI:
                 "page": page,
                 "pageSize": page_size,
                 "totalCount": total_count,
-                "totalPages": (total_count + page_size - 1) // page_size,
+                "totalPages": (
+                    (total_count + page_size - 1) // page_size
+                    if total_count > 0
+                    else 0
+                ),
                 "hasNext": end < total_count,
                 "hasPrevious": page > 1
             },
             "debug": {
-                "columnsSearched": len(data),
                 "columnsMatched": total_count
             }
         }
@@ -506,10 +512,10 @@ app = create_app()
 handler = Mangum(app, lifespan="auto")
 
 
-# if __name__ == "__main__":
-#     import uvicorn
+if __name__ == "__main__":
+    import uvicorn
 
-#     port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8000"))
     
-#     logger.info(f"Server running on http://localhost:{port}")
-#     uvicorn.run(app, host="127.0.0.1", port=port)
+    logger.info(f"Server running on http://localhost:{port}")
+    uvicorn.run(app, host="127.0.0.1", port=port)

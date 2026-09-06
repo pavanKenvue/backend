@@ -24,7 +24,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 COLUMN_MAP_PATH = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "resources", "column_map.json"))
 COLUMN_MAP_KEY = os.getenv("COLUMN_MAP_KEY", "")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
-ENABLE_LOCAL_FILE_READ = os.getenv("ENABLE_LOCAL_FILE_READ")
+ENABLE_LOCAL_FILE_READ = os.getenv("ENABLE_LOCAL_FILE_READ", False)
 
 # Orientation of column_map.json. "auto" inspects the data; set explicitly to
 # "column_to_param" or "param_to_column" to pin it.
