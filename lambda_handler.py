@@ -13,6 +13,7 @@ import time
 import re
 import uuid
 from typing import Any, Optional
+
 from contextlib import asynccontextmanager
 import boto3
 from datetime import datetime, UTC
@@ -148,6 +149,7 @@ def create_app() -> FastAPI:
             "columns": REGISTRY.columns,
             "paramMap": REGISTRY.param_map(),
             "paramMapFull": REGISTRY.param_map_full(),
+            "filterGroupColumns": sorted(REGISTRY.filter_group_columns),
         }
 
     @app.get("/columns/describe")

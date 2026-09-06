@@ -10,6 +10,19 @@ does not reach a query at all.
 The only data file consumed is:
 
   column_map.json   {"COLUMN_NAME": "pWidgetParam", ...}   (required)
+
+Where a column has more than one param mapped to it in the source data,
+inverting param->column into column->param keeps only the last param
+listed for that column; the others are dropped before this module ever
+sees the file.
+
+An entry whose param is an empty string (e.g. "PT_NAME": "") names a
+column that has no QuickSight Parameter control bound to it. It stays a
+normal, resolvable column -- REGISTRY.resolve() and value lookups work for
+it same as any other -- but it's left out of param_map()/paramMapFull and
+its name is added to ColumnRegistry.filter_group_columns instead, which the
+/columns endpoint surfaces as filterGroupColumns for the frontend to filter
+through QuickSight's FilterGroups API rather than a Parameter.
 """
 import json
 import os
@@ -27,8 +40,10 @@ S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 ENABLE_LOCAL_FILE_READ = os.getenv("ENABLE_LOCAL_FILE_READ", False)
 
 # Orientation of column_map.json. "auto" inspects the data; set explicitly to
-# "column_to_param" or "param_to_column" to pin it.
-COLUMN_MAP_ORIENTATION = os.getenv("COLUMN_MAP_ORIENTATION", "auto").lower()
+# "column_to_param" or "param_to_column" to pin it. column_map.json is stored
+# as {"COLUMN_NAME": "pWidgetParam", ...}, so the default is pinned here
+# rather than left to inference.
+COLUMN_MAP_ORIENTATION = os.getenv("COLUMN_MAP_ORIENTATION", "column_to_param").lower()
 _IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,127}$")
 
 class UnknownColumn(ValueError):
@@ -40,9 +55,9 @@ class ColumnInfo:
     params: tuple
 
     @property
-    def param(self) -> str:
-        """Primary QuickSight parameter for this column."""
-        return self.params[0]
+    def param(self) -> Optional[str]:
+        """Primary QuickSight parameter for this column, or None for a filter-group column."""
+        return self.params[0] if self.params else None
 
 
 def _read_local_or_s3(local_path: str, s3_key: str, required: bool) -> Optional[dict]:   
@@ -102,13 +117,23 @@ class ColumnRegistry:
     def __init__(self, column_to_param: Dict[str, str]):
         self.rejected: List[str] = []
         self.collisions: Dict[str, List[str]] = {}
+        self.filter_group_columns: List[str] = []
 
         params_by_column: Dict[str, List[str]] = {}
         for column, param in column_to_param.items():
             if not _IDENT_RE.match(column):
                 self.rejected.append(column)
                 continue
-            params_by_column.setdefault(column.upper(), []).append(param)
+            name = column.upper()
+            params_by_column.setdefault(name, [])
+            if param == "":
+                # No widget parameter bound to this column -- it's still a
+                # real, queryable column (values must resolve for it same as
+                # any other), just filtered through QuickSight's FilterGroups
+                # API on the frontend instead of a Parameter control.
+                self.filter_group_columns.append(name)
+            else:
+                params_by_column[name].append(param)
 
         self._by_name: Dict[str, ColumnInfo] = {}
         for name, params in params_by_column.items():
@@ -116,6 +141,12 @@ class ColumnRegistry:
                 self.collisions[name] = params
             self._by_name[name] = ColumnInfo(name=name, params=tuple(params))
 
+        if self.filter_group_columns:
+            logger.info(
+                f"{len(self.filter_group_columns)} column_map entries have an empty "
+                f"param; treating their columns as filter groups: "
+                f"{self.filter_group_columns}"
+            )
         if self.rejected:
             logger.error(
                 f"Rejected {len(self.rejected)} column_map entries that are not valid "
@@ -158,8 +189,8 @@ class ColumnRegistry:
         return sorted(self._by_name)
 
     def param_map(self) -> Dict[str, str]:
-        """One primary param per column."""
-        return {c.name: c.param for c in self._by_name.values()}
+        """One primary param per column that has one (excludes filter groups)."""
+        return {c.name: c.param for c in self._by_name.values() if c.param}
 
     def param_map_full(self) -> Dict[str, List[str]]:
         """Every param mapped to each column, for columns with more than one."""
