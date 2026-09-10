@@ -38,11 +38,6 @@ COLUMN_MAP_PATH = os.getenv("COLUMN_MAP_PATH", os.path.join(_THIS_DIR, "resource
 COLUMN_MAP_KEY = os.getenv("COLUMN_MAP_KEY", "")
 S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
 ENABLE_LOCAL_FILE_READ = os.getenv("ENABLE_LOCAL_FILE_READ", False)
-
-# Orientation of column_map.json. "auto" inspects the data; set explicitly to
-# "column_to_param" or "param_to_column" to pin it. column_map.json is stored
-# as {"COLUMN_NAME": "pWidgetParam", ...}, so the default is pinned here
-# rather than left to inference.
 COLUMN_MAP_ORIENTATION = os.getenv("COLUMN_MAP_ORIENTATION", "column_to_param").lower()
 _IDENT_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_$#]{0,127}$")
 
@@ -69,6 +64,7 @@ def _read_local_or_s3(local_path: str, s3_key: str, required: bool) -> Optional[
         except Exception as exc:
             raise RuntimeError(f"{source} is not valid JSON: {exc}") from exc
     if S3_BUCKET_NAME:
+        logger.info("Getting data from s3")
         source = f"s3://{S3_BUCKET_NAME}/{s3_key}"
         try:
             client = boto3.client("s3", region_name=os.getenv("AWS_REGION", "us-east-1"))
@@ -141,12 +137,12 @@ class ColumnRegistry:
                 self.collisions[name] = params
             self._by_name[name] = ColumnInfo(name=name, params=tuple(params))
 
-        if self.filter_group_columns:
-            logger.info(
-                f"{len(self.filter_group_columns)} column_map entries have an empty "
-                f"param; treating their columns as filter groups: "
-                f"{self.filter_group_columns}"
-            )
+        # if self.filter_group_columns:
+        #     logger.info(
+        #         f"{len(self.filter_group_columns)} column_map entries have an empty "
+        #         f"param; treating their columns as filter groups: "
+        #         f"{self.filter_group_columns}"
+        #     )
         if self.rejected:
             logger.error(
                 f"Rejected {len(self.rejected)} column_map entries that are not valid "

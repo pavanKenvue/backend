@@ -137,13 +137,6 @@
       "column": "legal_yn"
     }
   ],
-  "case_invalid_yn": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "case_invalid_yn"
-    }
-  ],
   "case_blind_status_yn": [
     {
       "table": "sv_golden_layer",
@@ -928,41 +921,6 @@
       "column": "agent_notes"
     }
   ],
-  "local_comment": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "local_comment"
-    }
-  ],
-  "patient_notes": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "patient_notes"
-    }
-  ],
-  "company_comment": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "company_comment"
-    }
-  ],
-  "reporter_comments": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "reporter_comments"
-    }
-  ],
-  "abbrev_narrative": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "abbrev_narrative"
-    }
-  ],
   "case_serious_yn": [
     {
       "table": "sv_golden_layer",
@@ -1327,13 +1285,6 @@
       "column": "pt_name"
     }
   ],
-  "primary_soc_yn": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "primary_soc_yn"
-    }
-  ],
   "hlt_code": [
     {
       "table": "sv_golden_layer",
@@ -1505,13 +1456,6 @@
       "table": "sv_golden_layer",
       "alias": "g",
       "column": "combination_product"
-    }
-  ],
-  "drug_character": [
-    {
-      "table": "sv_golden_layer",
-      "alias": "g",
-      "column": "drug_character"
     }
   ],
   "drug_not_admin": [
@@ -3213,6 +3157,203 @@
       "column": "linked_rank1_event_date"
     }
   ],
+  "case_drug_event_id": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "case_drug_event_id"
+    }
+  ],
+  "drug_auth_country": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_auth_country"
+    }
+  ],
+  "drug_character_other": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_character_other"
+    }
+  ],
+  "drug_coded_other": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_coded_other"
+    }
+  ],
+  "drug_event_quality_score": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_event_quality_score"
+    }
+  ],
+  "drug_name_other": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_name_other"
+    }
+  ],
+  "drug_rank": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_rank"
+    }
+  ],
+  "drug_reported_other": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_reported_other"
+    }
+  ],
+  "event_cong_nom_ynu": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "event_cong_nom_ynu"
+    }
+  ],
+  "event_lock_date": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "event_lock_date"
+    }
+  ],
+  "event_lock_date_s": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "event_lock_date_s"
+    }
+  ],
+  "event_rank_reaction": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "event_rank_reaction"
+    }
+  ],
+  "family_id_other": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "family_id_other"
+    }
+  ],
+  "generic_name_other": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "generic_name_other"
+    }
+  ],
+  "ime_yn": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "ime_yn"
+    }
+  ],
+  "interval_lock_end_dt": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "interval_lock_end_dt"
+    }
+  ],
+  "interval_lock_end_dt_s": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "interval_lock_end_dt_s"
+    }
+  ],
+  "interval_lock_start_dt": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "interval_lock_start_dt"
+    }
+  ],
+  "interval_lock_start_dt_s": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "interval_lock_start_dt_s"
+    }
+  ],
+  "meddra_version": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "meddra_version"
+    }
+  ],
+  "prod_code_status_other": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "prod_code_status_other"
+    }
+  ],
+  "total_quality_score": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "total_quality_score"
+    }
+  ],
+  "glue_extracted_at": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "glue_extracted_at"
+    },
+    {
+      "table": "sv_lab_details",
+      "alias": "l",
+      "column": "glue_extracted_at"
+    },
+    {
+      "table": "sv_med_non_med",
+      "alias": "m",
+      "column": "glue_extracted_at"
+    },
+    {
+      "table": "sv_product_mapping",
+      "alias": "p",
+      "column": "glue_extracted_at"
+    }
+  ],
+  "drug_character": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "drug_character"
+    }
+  ],
+  "case_invalid_yn": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "case_invalid_yn"
+    }
+  ],
+  "primary_soc_yn": [
+    {
+      "table": "sv_golden_layer",
+      "alias": "g",
+      "column": "primary_soc_yn"
+    }
+  ],
   "lab_test_date": [
     {
       "table": "sv_lab_details",
@@ -3239,23 +3380,6 @@
       "table": "sv_lab_details",
       "alias": "l",
       "column": "normal_low_value"
-    }
-  ],
-  "glue_extracted_at": [
-    {
-      "table": "sv_lab_details",
-      "alias": "l",
-      "column": "glue_extracted_at"
-    },
-    {
-      "table": "sv_med_non_med",
-      "alias": "m",
-      "column": "glue_extracted_at"
-    },
-    {
-      "table": "sv_product_mapping",
-      "alias": "p",
-      "column": "glue_extracted_at"
     }
   ],
   "smartone_category": [
