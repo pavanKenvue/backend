@@ -57,6 +57,7 @@ class ColumnInfo:
 
 def _read_local_or_s3(local_path: str, s3_key: str, required: bool) -> Optional[dict]:   
     if os.path.exists(local_path) and ENABLE_LOCAL_FILE_READ:
+        logger.info("Getting data from local")
         source = f"local file {local_path}"
         try:
             with open(local_path, "r", encoding="utf-8") as handle:
