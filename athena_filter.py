@@ -51,20 +51,24 @@ _ALIAS_REF_RE = re.compile(
 )
 
 
-def _load_alias_map() -> Dict[str, str]:
+_TEXT_COMPATIBLE_TYPES = {"varchar", "char", "string"}
+
+
+def _load_alias_map() -> Tuple[Dict[str, str], Dict[str, str]]:
     raw = _read_local_or_s3(COLUMN_ALIAS_LOCAL_PATH, COLUMN_ALIAS_KEY, required=False) or {}
     if not isinstance(raw, dict):
         logger.warn("column_map_alias JSON is not an object; ignoring it")
-        return {}
+        return {}, {}
 
     valid: Dict[str, str] = {}
+    data_types: Dict[str, str] = {}
     rejected: List[str] = []
     for column, candidates in raw.items():
         if not isinstance(column, str) or not isinstance(candidates, list) or not candidates:
             rejected.append(str(column))
             continue
 
-        refs: List[str] = []
+        refs: List[Tuple[str, str]] = []
         for candidate in candidates:
             if not isinstance(candidate, dict):
                 continue
@@ -73,14 +77,18 @@ def _load_alias_map() -> Dict[str, str]:
                 continue
             ref = f"{alias}.{ref_column}"
             if _ALIAS_REF_RE.match(ref):
-                refs.append(ref)
+                data_type = candidate.get("data_type")
+                refs.append((ref, data_type.strip().lower() if isinstance(data_type, str) else ""))
 
         if not refs:
             rejected.append(str(column))
             continue
 
-        chosen = next((r for r in refs if r.startswith(f"{BASE_ALIAS}.")), refs[0])
-        valid[column.strip().upper()] = chosen
+        chosen_ref, chosen_type = next((r for r in refs if r[0].startswith(f"{BASE_ALIAS}.")), refs[0])
+        key = column.strip().upper()
+        valid[key] = chosen_ref
+        if chosen_type:
+            data_types[key] = chosen_type
 
     if rejected:
         logger.error(
@@ -88,10 +96,10 @@ def _load_alias_map() -> Dict[str, str]:
             f"table alias or unsafe column reference: {rejected[:10]}"
         )
     logger.info(f"Loaded {len(valid)} column_map_alias entries for the join layer")
-    return valid
+    return valid, data_types
 
 
-ALIAS_BY_COLUMN = _load_alias_map()
+ALIAS_BY_COLUMN, DATA_TYPE_BY_COLUMN = _load_alias_map()
 
 
 def _qualified_column(column: str) -> str:
@@ -100,6 +108,24 @@ def _qualified_column(column: str) -> str:
     if ref:
         return ref
     return f"{BASE_ALIAS}.{REGISTRY.quoted(column)}"
+
+
+def _text_comparable(column: str, ref: str) -> str:
+    """SQL expression for `ref` that always compares as text.
+
+    Filter values arrive from the frontend as strings (often the exact text
+    Athena itself returned for a prior values lookup, e.g. "102662.0000000000"
+    for a DECIMAL column). Binding those strings straight into `IN (?, ...)`
+    against a non-varchar column makes Athena infer a type per placeholder
+    from its own shape, so a mixed-type IN-list can fail with a TYPE_MISMATCH
+    ("cannot find common type between varchar and bigint"). Casting the
+    column to VARCHAR whenever its real Athena type isn't already textual
+    keeps every placeholder in the list on the same type.
+    """
+    data_type = DATA_TYPE_BY_COLUMN.get(column)
+    if data_type and data_type not in _TEXT_COMPATIBLE_TYPES:
+        return f"CAST({ref} AS VARCHAR)"
+    return ref
 
 
 def _required_joins(aliases: set) -> List[Tuple[str, str, str]]:
@@ -132,8 +158,9 @@ def build_query(
     for filter_column, values in filters:
         filter_ref = _qualified_column(filter_column)
         aliases_used.add(filter_ref.split(".", 1)[0])
+        filter_expr = _text_comparable(filter_column, filter_ref)
         placeholders = ", ".join("?" for _ in values)
-        predicates.append(f"{filter_ref} IN ({placeholders})")
+        predicates.append(f"{filter_expr} IN ({placeholders})")
         params.extend(str(v) for v in values)
 
     if q and q.strip():
